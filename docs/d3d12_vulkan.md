@@ -514,8 +514,14 @@ What is implemented (all of it testable without the game):
     operation inherits the graphics state of its command list. The Vulkan replay snapshots the same pipeline, root
     data, render targets, IA bindings and raster state as a direct draw, then reads the records on the GPU inside
     that draw's rendering scope. A padded stride is supported; it is not evidence that a signature is simple.
-    A compound graphics signature still emits no draw, but its written VB/IB and root bindings are reset for the
-    next command, even if no record is interpreted. Untouched slots and previously recorded draws retain their state.
+    A compound graphics signature (root or IA arguments before its DRAW) is expanded on the CPU into the calls its
+    records stand for: each record's vertex buffer views, index buffer view, root constants and root CBVs are
+    applied in the signature's argument order, then its DRAW or DRAW_INDEXED is recorded, so the draw reads the
+    bindings the argument buffer names instead of the ones the list had bound. The expansion needs the record bytes
+    on the CPU, so only a host-visible (upload or readback) argument and count buffer are replayed; a device-local
+    buffer, which the GPU may have written, still draws nothing. In both cases every binding the signature writes is
+    reset after the call, even if no record is interpreted, as the D3D12 runtime does; untouched slots and previously
+    recorded draws retain their state.
     See the [D3D12 state-leakage contract](https://microsoft.github.io/DirectX-Specs/d3d/IndirectDrawing.html#state-leakage).
     Fixed- and GPU-counted batches use the device's enabled indirect features and limits. The current graphics
     path covers triangle lists on direct command lists. A bundle can defer a single operation with no count
@@ -1290,6 +1296,9 @@ and any validation error fails them.
   `d3d12_stateful_indirect_counted_pixels`: positive D3D12-to-Vulkan graphics tests. Compare every readback
   pixel with both a direct-draw reference and a known pattern for each draw kind; the counted variant fills
   its argument and count buffers by GPU copy before use.
+- `d3d12_compound_indirect_pixels`: a compound signature whose two records carry two vertex buffer views, the
+  index buffer view, two root constants and a root CBV each. The picture must match the same calls made by hand
+  and must not match the state the list had bound before the indirect call.
 - `d3d12_indirect_rt_test`: validates `ID3D12Device::CreateCommandSignature` + `ExecuteIndirect` with a GPU
   `CountBuffer` (`vkCmdDrawIndirectCount`, `count = 0` skipped and `count = 1` rendered), a draw whose record asks
   for four billion instances (clamped on the GPU, section 4.7), and a native Vulkan counted-draw reference over the
