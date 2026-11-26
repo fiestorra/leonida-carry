@@ -401,6 +401,14 @@ public:
 
     void STDMETHODCALLTYPE Dispatch(UINT x, UINT y, UINT z) override {
         d3d12_trace::record("ID3D12GraphicsCommandList::Dispatch");
+        // LEONIDA_TRACE_DISPATCH=1: every dispatch's thread-group counts and pipeline, in call order. A dispatch whose
+        // grid is far larger than the work behind it is the shape that takes seconds on the GPU and trips Windows'
+        // 2 s TDR, and the traced call alone does not say which one it was.
+        static const bool trace_dispatch = std::getenv("LEONIDA_TRACE_DISPATCH") != nullptr;
+        if (trace_dispatch)
+            std::fprintf(stderr, "[rt] dispatch %ux%ux%u groups=%llu pso=%p\n", x, y, z,
+                         static_cast<unsigned long long>(std::uint64_t(x) * y * z),
+                         reinterpret_cast<void*>(compute_pipeline_));
         if (defer([=](GraphicsCommandList& l) { l.record_dispatch(x, y, z); }, true)) return;
         record_dispatch(x, y, z);
     }
@@ -2825,3 +2833,4 @@ bool bound_descriptor_heap_bases(ID3D12GraphicsCommandList* list, D3D12_GPU_VIRT
 }
 
 }  // namespace rt::d3d12
+
