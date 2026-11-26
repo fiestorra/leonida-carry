@@ -518,7 +518,11 @@ What is implemented (all of it testable without the game):
     records stand for: each record's vertex buffer views, index buffer view, root constants and root CBVs are
     applied in the signature's argument order, then its DRAW or DRAW_INDEXED is recorded, so the draw reads the
     bindings the argument buffer names instead of the ones the list had bound. The expansion needs the record bytes
-    on the CPU, so only a host-visible (upload or readback) argument and count buffer are replayed; a device-local
+    on the CPU, so only a host-visible (upload or readback) argument and count buffer are replayed. Those bytes are
+    read when the call is *recorded*, not when the list executes, so an application that rewrites the argument buffer
+    between recording and execution - a ring buffer filled just before `ExecuteCommandLists`, or a list reused with a
+    new buffer - replays the records that were there at record time. Keeping the buffer referenced and expanding at
+    replay would match the runtime's timing; until then, fill the buffer before recording. A device-local
     buffer, which the GPU may have written, still draws nothing. In both cases every binding the signature writes is
     reset after the call, even if no record is interpreted, as the D3D12 runtime does; untouched slots and previously
     recorded draws retain their state.
