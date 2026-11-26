@@ -400,6 +400,11 @@ public:
     }
 
     void STDMETHODCALLTYPE Dispatch(UINT x, UINT y, UINT z) override {
+        // LEONIDA_SKIP_DISPATCH=1 (diagnostic, timing only): every compute dispatch is dropped, so a run can say
+        // whether the work that never finishes on the GPU is a dispatch or a draw. What the compute passes compute is
+        // then missing by design.
+        static const bool skip_dispatch = std::getenv("LEONIDA_SKIP_DISPATCH") != nullptr;
+        if (skip_dispatch) return;
         d3d12_trace::record("ID3D12GraphicsCommandList::Dispatch");
         // LEONIDA_TRACE_DISPATCH=1: every dispatch's thread-group counts and pipeline, in call order. A dispatch whose
         // grid is far larger than the work behind it is the shape that takes seconds on the GPU and trips Windows'
@@ -2833,4 +2838,5 @@ bool bound_descriptor_heap_bases(ID3D12GraphicsCommandList* list, D3D12_GPU_VIRT
 }
 
 }  // namespace rt::d3d12
+
 
