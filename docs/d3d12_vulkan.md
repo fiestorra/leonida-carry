@@ -518,10 +518,12 @@ What is implemented (all of it testable without the game):
     records stand for: each record's vertex buffer views, index buffer view, root constants and root CBVs are
     applied in the signature's argument order, then its DRAW or DRAW_INDEXED is recorded, so the draw reads the
     bindings the argument buffer names instead of the ones the list had bound. The expansion needs the record bytes
-    on the CPU, so only a host-visible (upload or readback) argument and count buffer are replayed. Those bytes are
-    read when the call is *recorded*, not when the list executes, so an application that rewrites the argument buffer
-    between recording and execution - a ring buffer filled just before `ExecuteCommandLists`, or a list reused with a
-    new buffer - replays the records that were there at record time. Keeping the buffer referenced and expanding at
+    on the CPU, so only a buffer whose memory the CPU can map (an upload or readback heap in practice) is replayed,
+    for the argument bytes and for the count buffer's DWORD alike. Those bytes are read when the call is *recorded*,
+    not when the list executes, so an application that rewrites the argument buffer between recording and execution -
+    a ring buffer filled just before `ExecuteCommandLists`, or a list reused with a new buffer - replays the records
+    that were there at record time; a count the GPU writes (a `CopyBufferRegion` into the count buffer, say) is not
+    seen, and the call replays the count that was there when it was recorded. Keeping the buffer referenced and expanding at
     replay would match the runtime's timing; until then, fill the buffer before recording. A device-local
     buffer, which the GPU may have written, still draws nothing. In both cases every binding the signature writes is
     reset after the call, even if no record is interpreted, as the D3D12 runtime does; untouched slots and previously
@@ -533,8 +535,8 @@ What is implemented (all of it testable without the game):
     direct parent's state at that call. Count buffers and compound signatures remain invalid in bundles.
     `d3d12_bundle_indirect_warp` and `d3d12_bundle_indirect_layer` compare DRAW and DRAW_INDEXED against direct
     pixels with two different parent bindings; the layer fixture also checks marker order and captured views.
-    Compound graphics signatures, non-unit instance divisors
-    and unsupported capabilities stay guarded. A GPU-counted draw currently requires
+    A compound graphics signature whose record bytes are not host-mappable stays guarded, as do
+    non-unit instance divisors and unsupported capabilities. A GPU-counted draw currently requires
     `maxDrawIndirectCount == UINT32_MAX`: Vulkan also limits the raw counter value, not just the caller's maximum.
     To omit indirect graphics without changing direct drawing or compute, set
     `LEONIDA_INDIRECT_DRAWS=off` before starting the process. This applies to the Vulkan-backed D3D12
@@ -5074,3 +5076,4 @@ The public Xbox graphics index retrieved for this document lists interfaces up t
 `ID3D12GraphicsCommandList7`; the shipped DLL names `Device11` and `CommandList8`, which the index does not cover.
 This is why the layer targets the Windows SDK's newer public chain rather than assuming the Xbox public index is
 complete.
+
