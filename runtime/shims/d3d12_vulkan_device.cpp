@@ -209,9 +209,27 @@ __declspec(noinline) LEONIDA_GUARDED_NO_BUILTIN void copy_streaming(std::uint8_t
 // A copy that a page fault ends instead of killing the process: the title may decommit or remap a page between the
 // VirtualQuery that saw it committed and the read. No C++ objects here: it is a __try frame. `streaming`: for
 // write-combined pages (copy_streaming). Paid at every submission.
+// LEONIDA_COPY_MODE=plain|none (timing only, the same knob VIctory has as VICTORY_COPY_MODE): how the copies of
+// the title's pages into the slot-133 shadows are made. 'plain' copies without the mapped-page guard, 'none'
+// skips them, both to tell how much of a submission they cost. Anything else is the normal guarded copy.
+enum class CopyMode { Guarded, Plain, None };
+inline CopyMode copy_mode() {
+    static const CopyMode mode = [] {
+        char value[8]{};
+        const DWORD n = GetEnvironmentVariableA("LEONIDA_COPY_MODE", value, sizeof value);
+        if (n == 1 && (value[0] == 'n' || value[0] == 'N')) return CopyMode::None;
+        if (n == 5 && _strnicmp(value, "plain", 5) == 0) return CopyMode::Plain;
+        return CopyMode::Guarded;
+    }();
+    return mode;
+}
+
 bool copy_guarded(std::uint8_t* to, const std::uint8_t* from, std::size_t bytes, bool streaming) {
+    const CopyMode mode = copy_mode();
+    if (mode == CopyMode::None) return true;
     __try {
-        if (streaming) copy_streaming(to, from, bytes);
+        if (mode == CopyMode::Plain) __movsb(to, from, bytes);
+        else if (streaming) copy_streaming(to, from, bytes);
         else leonida::guarded::copy(to, from, bytes);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
