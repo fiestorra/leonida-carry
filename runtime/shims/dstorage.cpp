@@ -473,6 +473,13 @@ const leonida::bcpack::Calibration* bcpack_history() {
             if (!shaders.has_filename()) shaders = shaders.parent_path();
             path = shaders.parent_path() / "bcpack" / "history.bcph";
         }
+        std::string shown;
+        if (const int need = WideCharToMultiByte(CP_UTF8, 0, path.c_str(), int(path.native().size()), nullptr, 0, nullptr,
+                                                 nullptr)) {
+            shown.resize(std::size_t(need));
+            WideCharToMultiByte(CP_UTF8, 0, path.c_str(), int(path.native().size()), shown.data(), need, nullptr, nullptr);
+        }
+        log_once("history-path", std::string("BCPack predictor profile: ") + (n ? "explicit " : "default ") + shown);
         FILE* raw = nullptr;
         if (_wfopen_s(&raw, path.c_str(), L"rb") || !raw) {
             log_once("history-open", "could not open the local BCPack predictor profile");
@@ -1133,7 +1140,17 @@ private:
                 return GetEnvironmentVariableA("LEONIDA_DSTORAGE_FAST_BCPACK", value, sizeof value) != 1 || value[0] != '0';
             }();
             const char* failure = nullptr;
-            const auto quality = leonida::bcpack::decode(bc, data, scratch, allow_fitted, bc >= 6 ? bcpack_history() : nullptr, &failure, fast_entropy);
+            const leonida::bcpack::Calibration* const profile = bc >= 6 ? bcpack_history() : nullptr;
+            const auto quality = leonida::bcpack::decode(bc, data, scratch, allow_fitted, profile, &failure,
+                                                         fast_entropy);
+            if (quality == leonida::bcpack::Quality::failed && failure &&
+                std::strcmp(failure, "missing-profile") == 0) {
+                static std::atomic<bool> reported{false};
+                if (!reported.exchange(true, std::memory_order_relaxed))
+                    std::fprintf(stderr,
+                        "[rt] dstorage: a BC%d block was refused for lack of predictors (dst %llu B, predictors %s)\n",
+                        bc, static_cast<unsigned long long>(r.DestinationSize), profile ? "loaded" : "absent");
+            }
             e.timing.bcpack = Timing::elapsed(begin);
             if (quality == leonida::bcpack::Quality::failed) { e.reason = failure; return E_DSTORAGE_DECOMPRESSION_ERROR; }
             if (quality == leonida::bcpack::Quality::fitted) {
@@ -1481,3 +1498,5 @@ SHIM_TABLE(dstorage,
     {"xcrdapi.dll", "DStorageGetFactory", reinterpret_cast<void*>(&dstorage_get_factory)},
     {"dstorage.dll", "DStorageGetFactory", reinterpret_cast<void*>(&dstorage_get_factory)},
 );
+
+
