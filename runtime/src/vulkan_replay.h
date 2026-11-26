@@ -2077,7 +2077,7 @@ inline ReplayResult prepare_buffer_uav_clear(const ClearUnorderedAccess& clear, 
         if (offset > UINT64_MAX - p.binding.buffer_offset ||
             bytes > UINT64_MAX - (p.binding.buffer_offset + offset)) return ReplayResult::invalid_clear;
         offset += p.binding.buffer_offset;  // the view is relative to the resource, which starts at buffer_offset
-        if (offset % std::min(e, 4u)) return ReplayResult::unsupported;
+        if (offset % std::min(e, 4u)) return unsupported_at(__LINE__);
         if (e > 4 && bytes % 4) {
             return unsupported_at(__LINE__);
         }
@@ -2964,7 +2964,7 @@ inline ReplayResult prepare_quad_indices(const Draw& draw, const ReplayFunctions
     if (!quads) return ReplayResult::success;
     if (!vk.prepare_quad_indices || !vk.emit_quad_indices || !vk.copy_scratch ||
         quads > QuadIndexExpander::max_quads)
-        return ReplayResult::unsupported;
+        return unsupported_at(__LINE__);
     // The indices from the draw's first one that the view holds; the pass reads the rest as 0, like D3D12. With no
     // index buffer (the zero page) that is all of them.
     const std::uint32_t index_bytes = p.index_type == VK_INDEX_TYPE_UINT16 ? 2 : 4;
@@ -2976,7 +2976,7 @@ inline ReplayResult prepare_quad_indices(const Draw& draw, const ReplayFunctions
     if (!vk.copy_scratch(QuadIndexExpander::bytes(quads), scratch, scratch_offset) ||
         !vk.prepare_quad_indices(p.index_buffer, first, p.index_type, readable, quads, scratch, scratch_offset,
                                  p.quad_indices))
-        return ReplayResult::unsupported;
+        return unsupported_at(__LINE__);
     return ReplayResult::success;
 }
 
@@ -3474,18 +3474,18 @@ ReplayResult prepare(const CommandList& list, Resolve&& resolve, const ReplayFun
             return ReplayResult::success;
         }
         if (!vk.copy_image_to_buffer || !vk.copy_buffer_to_image || !vk.copy_scratch)
-            return ReplayResult::unsupported;
+            return unsupported_at(__LINE__);
         if (!vk.graphics_family) {
             // Coupled layouts can also need to zero-initialize the sibling plane on first use.
             const auto aspects = detail::planes_for_layout(p.binding, p.range, vk.separate_depth_stencil_layouts).aspectMask;
             if (!(vk.queue_stages & VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT) || !vk.compute_copy_aspects ||
                 (vk.compute_copy_aspects(p.binding.format) & aspects) != aspects)
-                return ReplayResult::unsupported;
+                return unsupported_at(__LINE__);
         }
-        if (p.range.baseMipLevel || p.range.levelCount != 1) return ReplayResult::unsupported;
+        if (p.range.baseMipLevel || p.range.levelCount != 1) return unsupported_at(__LINE__);
         detail::DepthUavCopy copy{};
         if (p.binding.depth_conversion && (p.range.aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT)) {
-            if (!vk.graphics_family || !vk.blit_image) return ReplayResult::unsupported;
+            if (!vk.graphics_family || !vk.blit_image) return unsupported_at(__LINE__);
             const auto* middle = resolve(p.binding.depth_conversion);
             if (!middle || !middle->image) return ReplayResult::unresolved_resource;
             copy.conversion = *middle;
@@ -3503,11 +3503,11 @@ ReplayResult prepare(const CommandList& list, Resolve&& resolve, const ReplayFun
                                                                                     VK_IMAGE_ASPECT_STENCIL_BIT;
         const VkDeviceSize bytes_per_texel = block_format(p.binding.format, largest_aspect).bytes;
         if (!texels || !bytes_per_texel || texels > UINT64_MAX / bytes_per_texel / p.range.layerCount)
-            return ReplayResult::unsupported;
+            return unsupported_at(__LINE__);
         const VkDeviceSize bytes = texels * bytes_per_texel * p.range.layerCount;
         if (bytes > plane_capacity) {
             if (!vk.copy_scratch(bytes, plane_scratch, plane_offset) || !plane_scratch || plane_offset % 4)
-                return ReplayResult::unsupported;
+                return unsupported_at(__LINE__);
             plane_capacity = bytes;
         }
         copy.scratch = plane_scratch;
@@ -3517,7 +3517,7 @@ ReplayResult prepare(const CommandList& list, Resolve&& resolve, const ReplayFun
             if (!vk.depth24_prepare || !vk.depth24_run ||
                 (vk.queue_stages && !(vk.queue_stages & VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)) ||
                 texels > UINT32_MAX || (statistics_active && !statistics_helpers))
-                return ReplayResult::unsupported;
+                return unsupported_at(__LINE__);
             Depth24Job job{};
             job.to_float = after;
             job.app = plane_scratch;
@@ -3528,7 +3528,7 @@ ReplayResult prepare(const CommandList& list, Resolve&& resolve, const ReplayFun
             job.slices = p.range.layerCount;
             job.app_row_words = job.width;
             job.app_slice_words = std::uint32_t(texels);
-            if (!vk.depth24_prepare(job, copy.depth24_parts)) return ReplayResult::unsupported;
+            if (!vk.depth24_prepare(job, copy.depth24_parts)) return unsupported_at(__LINE__);
             copy.depth24_scratch = job.scratch;
             copy.depth24_scratch_offset = job.scratch_offset;
         }
@@ -3592,7 +3592,7 @@ ReplayResult prepare(const CommandList& list, Resolve&& resolve, const ReplayFun
             if (p.binding.depth_uav &&
                 (detail::unsupported_depth_uav_access(texture->layout_before, texture->access_before) ||
                  detail::unsupported_depth_uav_access(texture->layout_after, texture->access_after)))
-                return ReplayResult::unsupported;
+                return unsupported_at(__LINE__);
             if (!(texture->flags & texture_barrier_discard) && texture->layout_before != d3d12_layout::undefined) {
                 const auto result = prepare_depth_uav(p, detail::texture_uav_layout(texture->layout_before),
                                                       detail::texture_uav_layout(texture->layout_after));
@@ -3822,9 +3822,9 @@ ReplayResult prepare(const CommandList& list, Resolve&& resolve, const ReplayFun
                     return v && *v == '1';
                 }();
                 if (result == ReplayResult::success && image.rgba4_render_fallback && refuse_rgba4_copy)
-                    return ReplayResult::unsupported;
+                    return unsupported_at(__LINE__);
                 if(result==ReplayResult::success && image.xbox_depth16_stencil8 && image.format!=VK_FORMAT_D16_UNORM_S8_UINT &&
-                   !p.buffer_image_copies.empty() && p.buffer_image_copies[0].imageSubresource.aspectMask==VK_IMAGE_ASPECT_DEPTH_BIT) return ReplayResult::unsupported;
+                   !p.buffer_image_copies.empty() && p.buffer_image_copies[0].imageSubresource.aspectMask==VK_IMAGE_ASPECT_DEPTH_BIT) return unsupported_at(__LINE__);
                 const bool depth24_footprint = result == ReplayResult::success && image.depth24_as_float &&
                     !p.buffer_image_copies.empty() &&
                     p.buffer_image_copies[0].imageSubresource.aspectMask == VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -3962,7 +3962,7 @@ ReplayResult prepare(const CommandList& list, Resolve&& resolve, const ReplayFun
                 }
             }
         } else if (std::holds_alternative<label::Write>(command)) {
-            if (!vk.gpu_label) return ReplayResult::unsupported;
+            if (!vk.gpu_label) return unsupported_at(__LINE__);
         } else if (const auto* write = std::get_if<WriteImmediate>(&command)) {
             if (!vk.update_buffer || !vk.buffer_at) return unsupported_at(__LINE__);
             std::uint64_t bytes = 4;
@@ -4289,7 +4289,7 @@ ReplayResult prepare(const CommandList& list, Resolve&& resolve, const ReplayFun
                 prepared_draw.skipped = true;  // dropped at emit (see the dispatch branch above)
             } else if (draw.state->indexed && !draw.state->mesh && draw.state->topology == topology_quad_list) {
                 // The index expansion is a helper dispatch: inside a statistics query it needs the segment pool.
-                if (statistics_active && !statistics_helpers && draw.state->count >= 4) return ReplayResult::unsupported;
+                if (statistics_active && !statistics_helpers && draw.state->count >= 4) return unsupported_at(__LINE__);
                 if (const auto r = detail::prepare_quad_indices(*draw.state, vk, prepared_draw); r != ReplayResult::success)
                     return r;
             }
