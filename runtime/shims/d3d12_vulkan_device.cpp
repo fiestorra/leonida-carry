@@ -17179,6 +17179,17 @@ public:
         }
         if (desc->ByteStride % 4) return E_INVALIDARG;
         if (!out) return E_UNEXPECTED;  // the host's answer for a valid description and no output
+        // A command signature keeps only its kind and stride, and ExecuteIndirect reads the draw or dispatch
+        // arguments at the start of each record. Arguments before them (root constants, root views, vertex and index
+        // buffer views) change state per command, which the replay does not do yet: accepted, their bytes would be
+        // read as the draw's arguments. So such a signature is refused, logged once per first argument type. The
+        // title's startup signatures each have one argument.
+        if (desc->NumArgumentDescs > 1) {
+            log_once("CreateCommandSignature refused (not implemented): arguments before the draw or dispatch, "
+                     "first argument type",
+                     int(desc->pArgumentDescs[0].Type));
+            return E_NOTIMPL;
+        }
         leonida::IndirectKind kind;
         switch (desc->pArgumentDescs[desc->NumArgumentDescs - 1].Type) {
         case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW: kind = leonida::IndirectKind::draw; break;

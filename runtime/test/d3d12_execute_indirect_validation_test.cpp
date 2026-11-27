@@ -333,6 +333,77 @@ bool run_positive_gpu_dispatch(Env& env) {
     return true;
 }
 
+// Layer-only. Valid D3D12 signatures that put state-changing arguments before the draw or dispatch: the layer keeps
+// only a signature's kind and stride and reads the draw's arguments at the start of each record, so it refuses them
+// (E_NOTIMPL, no object) rather than drawing with those bytes as counts. The root signature is the empty one; its
+// parameter indexes are not checked by the layer, which refuses before it would need them.
+bool refuses_state_arguments(Env& env) {
+    CHECK(env.empty_root.p);
+    struct Shape {
+        const char* name;
+        UINT stride;
+        std::vector<D3D12_INDIRECT_ARGUMENT_TYPE> types;
+    };
+    const Shape shapes[] = {
+        {"vertex buffer view, draw", 32,
+         {D3D12_INDIRECT_ARGUMENT_TYPE_VERTEX_BUFFER_VIEW, D3D12_INDIRECT_ARGUMENT_TYPE_DRAW}},
+        {"index buffer view, draw indexed", 36,
+         {D3D12_INDIRECT_ARGUMENT_TYPE_INDEX_BUFFER_VIEW, D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED}},
+        {"constant, draw", 20, {D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT, D3D12_INDIRECT_ARGUMENT_TYPE_DRAW}},
+        {"constant, dispatch", 16, {D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT, D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH}},
+        {"CBV, draw", 24,
+         {D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT_BUFFER_VIEW, D3D12_INDIRECT_ARGUMENT_TYPE_DRAW}},
+        {"SRV, draw indexed", 28,
+         {D3D12_INDIRECT_ARGUMENT_TYPE_SHADER_RESOURCE_VIEW, D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED}},
+        {"UAV, dispatch", 20,
+         {D3D12_INDIRECT_ARGUMENT_TYPE_UNORDERED_ACCESS_VIEW, D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH}},
+        {"vertex buffer view, constant, draw", 36,
+         {D3D12_INDIRECT_ARGUMENT_TYPE_VERTEX_BUFFER_VIEW, D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT,
+          D3D12_INDIRECT_ARGUMENT_TYPE_DRAW}},
+    };
+    for (const Shape& shape : shapes) {
+        std::vector<D3D12_INDIRECT_ARGUMENT_DESC> args;
+        for (const D3D12_INDIRECT_ARGUMENT_TYPE type : shape.types) {
+            D3D12_INDIRECT_ARGUMENT_DESC arg{};
+            arg.Type = type;
+            if (type == D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT) arg.Constant.Num32BitValuesToSet = 1;
+            args.push_back(arg);
+        }
+        const D3D12_COMMAND_SIGNATURE_DESC desc{shape.stride, UINT(args.size()), args.data(), 0};
+        Ref<ID3D12CommandSignature> sig;
+        const HRESULT hr = env.device->CreateCommandSignature(&desc, env.empty_root.p, IID_PPV_ARGS(&sig.p));
+        if (hr != E_NOTIMPL || sig.p) {
+            std::fprintf(stderr, "FAIL state-argument signature (%s): hr=0x%08lx, object %s\n", shape.name,
+                         static_cast<unsigned long>(hr), sig.p ? "created" : "null");
+            return false;
+        }
+    }
+    // An invalid description is still E_INVALIDARG, checked before the refusal: a root argument with no root
+    // signature, and a stride that cannot hold the record.
+    {
+        D3D12_INDIRECT_ARGUMENT_DESC args[2]{};
+        args[0].Type = D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT;
+        args[0].Constant.Num32BitValuesToSet = 1;
+        args[1].Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW;
+        D3D12_COMMAND_SIGNATURE_DESC desc{20, 2, args, 0};
+        Ref<ID3D12CommandSignature> sig;
+        CHECK(env.device->CreateCommandSignature(&desc, nullptr, IID_PPV_ARGS(&sig.p)) == E_INVALIDARG && !sig.p);
+        desc.ByteStride = 16;
+        CHECK(env.device->CreateCommandSignature(&desc, env.empty_root.p, IID_PPV_ARGS(&sig.p)) == E_INVALIDARG &&
+              !sig.p);
+    }
+    // A one-argument signature with a root signature is still created.
+    {
+        D3D12_INDIRECT_ARGUMENT_DESC arg{};
+        arg.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW;
+        const D3D12_COMMAND_SIGNATURE_DESC desc{16, 1, &arg, 0};
+        Ref<ID3D12CommandSignature> sig;
+        CHECK(SUCCEEDED(env.device->CreateCommandSignature(&desc, env.empty_root.p, IID_PPV_ARGS(&sig.p))) && sig.p);
+    }
+    std::printf("state-argument signatures: %zu shapes refused with E_NOTIMPL\n", std::size(shapes));
+    return true;
+}
+
 }  // namespace
 
 int main() {
@@ -398,6 +469,9 @@ int main() {
                                [](Env& e) { e.list->ExecuteIndirect(nullptr, 1, e.buf256.p, 0, nullptr, 0); }},
                          null_hr));
         REQUIRE(FAILED(null_hr));
+
+        // Layer-only: signatures with state-changing arguments before the draw or dispatch are refused.
+        REQUIRE(refuses_state_arguments(env));
 
         // Positive valid GPU ExecuteIndirect dispatch on Vulkan.
         REQUIRE(run_positive_gpu_dispatch(env));
